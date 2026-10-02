@@ -743,7 +743,10 @@ textarea {
 
 .resize-handle-bottom {
   position: absolute;
-  bottom: -6px;
+  /* Inside the panel: .generate-preview scrolls (overflow: auto), so a handle parked
+     at bottom: -6px had its centre - and the grip mark drawn at top: 5px - clipped
+     away, where only a few pixels of its top edge remained clickable. */
+  bottom: 0;
   left: 0;
   right: 0;
   height: 12px;
@@ -3397,6 +3400,24 @@ body.ui-font-comfortable .nav-style-preset {
   grid-template-rows: minmax(145px, 1fr) minmax(130px, 150px) minmax(220px, 250px);
 }
 
+@media (max-width: 800px) {
+  /* Measured at 768x900: the three children kept their intrinsic heights
+     (canvas row 490 + task monitor 167 + input row 349 = 1006) inside a 721px
+     column, so the pane column scrolled and the vertical splitter was no longer
+     laid out where a pointer could reach it. Let them share the column instead. */
+  #pageGenerate .generate-center > .creator-canvas-row {
+    flex: 1 1 auto;
+    min-height: 180px;
+  }
+  #pageGenerate .generate-center > .creator-task-monitor {
+    flex: 0 0 auto;
+  }
+  #pageGenerate .generate-center > .creator-input-row {
+    flex: 1 1 auto;
+    min-height: 210px;
+  }
+}
+
 @media (max-height: 760px) and (min-width: 801px) {
   #pageGenerate .generate-center {
     grid-template-rows: minmax(170px, 1fr) 42px minmax(205px, 235px);
@@ -4443,6 +4464,19 @@ body.dock-auto-hide.dock-pinned .dock-reveal-handle span {
 #pageGenerate.precision-edit-active .creator-input-row {
   flex-basis: clamp(560px, 72vh, 820px);
   min-height: 520px;
+}
+
+/* Measured at 1920x1080 and 1600x900: the generate action sat below its own scrollable
+   panel (button top 1076 against a panel that ends at 1038) and below the viewport
+   (bottom 1120 vs 1080), because the prompt column is taller than the row and the app
+   shell cannot scroll. Pin the action to the bottom of the panel so it stays visible
+   whatever the prompt grows to. */
+#pageGenerate #creatorGenerateAction.creator-generate-action {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: var(--bg-card, #fff);
+  padding-bottom: 4px;
 }
 
 #pageGenerate.precision-edit-active #panelPrecisionEdit {

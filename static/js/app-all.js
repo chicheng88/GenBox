@@ -329,6 +329,21 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('upscaleOpts').style.display = this.checked ? '' : 'none';
   });
 
+  // Ctrl/Cmd+Enter starts a generation from anywhere on the create page - including from
+  // inside the prompt box, which the plain-Enter handler below deliberately skips. The
+  // button's own tooltip has advertised this shortcut all along.
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter' || e.isComposing || (!e.ctrlKey && !e.metaKey) || e.repeat) return;
+    // The create page is shown by dropping its 'hidden' class (it never carries 'active').
+    var page = document.getElementById('pageGenerate');
+    if (!page || page.classList.contains('hidden') || page.offsetParent === null) return;
+    var generateButton = document.getElementById('btnGen');
+    if (!generateButton || generateButton.disabled || typeof doGenerate !== 'function') return;
+    if (typeof genCurrentGenId !== 'undefined' && genCurrentGenId) return;
+    e.preventDefault();
+    doGenerate();
+  });
+
   // ESC 关闭弹窗
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Enter' && !e.isComposing && !e.shiftKey && !e.altKey) {
@@ -2674,14 +2689,28 @@ function bindPrecisionDocsDialog() {
   });
 }
 
+/** Vertical room left for the canvas before it would slide under the app status bar. */
+function precisionCanvasAvailableHeight(shell) {
+  if (!shell || !shell.getBoundingClientRect) return 0;
+  var top = shell.getBoundingClientRect().top;
+  var statusBar = document.querySelector('.status-bar');
+  var boundary = statusBar && statusBar.getBoundingClientRect
+    ? statusBar.getBoundingClientRect().top
+    : Math.max(document.documentElement && document.documentElement.clientHeight || 0, window.innerHeight || 0);
+  return Math.floor(boundary - top);
+}
+
 function precisionCanvasResizeLimits(shell) {
   var stage = shell && shell.closest ? shell.closest('.precision-edit-stage-column') : null;
   var stageWidth = stage ? stage.clientWidth : 0;
   if (!stageWidth && stage && stage.getBoundingClientRect) stageWidth = stage.getBoundingClientRect().width;
   if (!stageWidth && shell && shell.parentElement) stageWidth = shell.parentElement.clientWidth;
   var viewportWidth = Math.max(document.documentElement && document.documentElement.clientWidth || 0, window.innerWidth || 0);
-  var viewportHeight = Math.max(document.documentElement && document.documentElement.clientHeight || 0, window.innerHeight || 0);
-  var maxHeight = viewportHeight ? Math.max(240, Math.min(760, viewportHeight - 120)) : 760;
+  // Measure the space that actually exists between the shell's top and the top of the
+  // app status bar. A viewport-based allowance let the shell grow under the status bar,
+  // where its bottom-right grip stopped receiving pointer events.
+  var availableHeight = precisionCanvasAvailableHeight(shell);
+  var maxHeight = availableHeight > 0 ? Math.max(240, Math.min(760, availableHeight)) : 760;
   var heightLimitedWidth = precisionEditSourceHeight
     ? maxHeight * precisionEditSourceWidth / precisionEditSourceHeight
     : 1600;
@@ -2767,7 +2796,14 @@ function beginPrecisionCanvasResize(event) {
 function continuePrecisionCanvasResize(event) {
   var state = precisionCanvasResizeState;
   if (!state || state.pointerId !== event.pointerId) return;
-  applyPrecisionCanvasVisualSize(state.startWidth + event.clientX - state.startX);
+  var dx = event.clientX - state.startX;
+  var dy = event.clientY - state.startY;
+  // This grip sits on the canvas's bottom-right corner (44x44, cursor: nwse-resize),
+  // so a vertical drag is as intentional as a horizontal one. Driving the size only
+  // from dx ignored it, which made a down/up drag look like a sideways jump.
+  // Follow whichever axis the pointer actually moved along more.
+  var delta = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+  applyPrecisionCanvasVisualSize(state.startWidth + delta);
   event.preventDefault();
 }
 
@@ -2791,11 +2827,13 @@ function bindPrecisionCanvasResizeHandle() {
   handle.addEventListener('pointerdown', beginPrecisionCanvasResize);
   handle.addEventListener('lostpointercapture', endPrecisionCanvasResize);
   handle.addEventListener('keydown', function(event) {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    var grow = event.key === 'ArrowRight' || event.key === 'ArrowDown';
+    var shrink = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+    if (!grow && !shrink) return;
     var shell = document.getElementById('precisionCanvasShell');
     if (!shell || shell.classList.contains('is-empty')) return;
     var width = shell.getBoundingClientRect ? shell.getBoundingClientRect().width : shell.clientWidth;
-    applyPrecisionCanvasVisualSize(width + (event.key === 'ArrowRight' ? 24 : -24));
+    applyPrecisionCanvasVisualSize(width + (grow ? 24 : -24));
     event.preventDefault();
   });
   var shell = document.getElementById('precisionCanvasShell');
@@ -10498,11 +10536,16 @@ function startResize(e, direction) {
   var center = layout.querySelector('.generate-center');
   var preview = center.querySelector('.generate-preview');
   var bottomRow = center.querySelector('.generate-bottom-row');
+  // The vertical splitter lives between the canvas row that holds the preview and
+  // .generate-bottom-row, and both are flex children of .generate-center. The old
+  // code flexed .generate-preview, a grandchild, so dragging the bar down did
+  // nothing at all.
+  var canvasRow = center.querySelector('.creator-canvas-row') || (preview ? preview.parentElement : null);
 
   var startX = e.clientX;
   var startY = e.clientY;
   var startLeftW = left ? left.offsetWidth : 260;
-  var startPreviewH = preview ? preview.offsetHeight : 0;
+  var startPreviewH = canvasRow ? canvasRow.offsetHeight : (preview ? preview.offsetHeight : 0);
   var startBottomH = bottomRow ? bottomRow.offsetHeight : 0;
   var startCenterH = center ? center.offsetHeight : 0;
 
@@ -10519,13 +10562,28 @@ function startResize(e, direction) {
       left.style.minWidth = newW + 'px';
     } else if (direction === 'bottom') {
       var dy = ev.clientY - startY;
-      var available = startCenterH - 24;
-      var newPreviewH = Math.max(120, Math.min(startPreviewH + dy, available - 100));
-      var newBottomH = available - newPreviewH;
-      var previewFlex = newPreviewH / available;
-      var bottomFlex = newBottomH / available;
-      preview.style.flex = previewFlex.toFixed(2);
-      bottomRow.style.flex = bottomFlex.toFixed(2);
+      // A real splitter: whatever the upper pane gains, the lower pane gives up, so
+      // the two always fill the same space. Growing only the upper pane overflowed
+      // the column (blank space below); shrinking it clipped the preview instead of
+      // handing the space to its neighbour.
+      var total = startPreviewH + startBottomH;
+      // The floors mirror the stylesheet: .creator-canvas-row is min-height 220px
+      // and .creator-input-row is min-height 210px, so neither pane can be
+      // squeezed below what the design system already guarantees.
+      var newTop = Math.max(220, Math.min(startPreviewH + dy, total - 210));
+      var newBottom = total - newTop;
+      if (canvasRow) {
+        canvasRow.style.flex = '0 0 auto';
+        canvasRow.style.height = Math.round(newTop) + 'px';
+        canvasRow.style.minHeight = Math.round(newTop) + 'px';
+        canvasRow.style.maxHeight = Math.round(newTop) + 'px';
+      }
+      if (bottomRow) {
+        bottomRow.style.flex = '0 0 auto';
+        bottomRow.style.height = Math.round(newBottom) + 'px';
+        bottomRow.style.minHeight = Math.round(newBottom) + 'px';
+        bottomRow.style.maxHeight = Math.round(newBottom) + 'px';
+      }
     }
   }
 

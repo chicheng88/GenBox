@@ -1,5 +1,105 @@
 # Current Project Status
 
+## 2026-10-02 Precision Canvas Corner Grip Drag Axis
+
+- **REPORTED:** The canvas corner grip (bottom-right of
+  `precisionCanvasShell`, 44x44, `cursor: nwse-resize`) changed the canvas
+  width when dragged vertically: dragging down narrowed the canvas and
+  dragging up widened it, instead of resizing it the way the grip implies.
+- **FIXED / LOCAL:** `continuePrecisionCanvasResize` read only `dx`, so a
+  vertical drag was discarded and the pointer's incidental horizontal drift
+  did the resizing. It now follows the dominant axis
+  (`Math.abs(dx) >= Math.abs(dy) ? dx : dy`), and its keyboard path accepts
+  `ArrowUp`/`ArrowDown` beside `ArrowLeft`/`ArrowRight`. The `app-all.js` cache
+  stamp moved from `?v=59` to `?v=60`.
+- **VERIFIED / LOCAL UI:** `node tests/test_precision_canvas_resize_axis.mjs`
+  extracts and executes the shipped function body and asserts: straight down
+  `400 -> 440`, straight up `400 -> 360`, rightward `400 -> 440` (unchanged),
+  both diagonal dominances, and a motionless pointer that resizes nothing.
+  The same assertions run against `git show 02ce25e:static/js/app-all.js`
+  return `400` for both vertical drags, which is the reported symptom.
+- **VERIFIED / LOCAL:** `node --check static/js/app-all.js` passes. The other
+  eight resize handles were audited against their advertised cursors (canvas
+  bottom bar, inspector separator, cutout dock separator, generate-page
+  left/bottom handles, divider drag, provider column grip, modal
+  ew/ns/both); none had the mismatch, and the test now guards their axes too.
+- **FIXED / LOCAL:** `tests/test_precision_protocol_ui.mjs` failed on
+  `02ce25e` with `ReferenceError: modelSupportsGenerationMode is not defined`
+  (reproduced in a `git worktree` checkout of that commit, so it predates the
+  grip fix): its `vm` sandbox extracted `generationProviderModelIds` and
+  `generationProviderModelSettings` but none of the helpers the latter calls.
+  The sandbox now also loads `generationModelId`,
+  `getProviderModelCapabilityRecord`, `generationModelIsImage` and
+  `modelSupportsGenerationMode`, and defines `currentMode`; its original
+  assertions then pass unchanged, so the behaviour it checks was never broken -
+  only its harness was.
+- **VERIFIED / LOCAL:** All fifteen `tests/test_*.mjs` UI contract scripts pass,
+  the four new `tests/test_precision_canvas_resize_axis.mjs` guards included.
+- **REPORTED:** On the generate page the vertical splitter above the task monitor
+  did nothing: pulling it down never extended the preview area downward.
+- **FIXED / LOCAL:** `startResize(e, 'bottom')` flexed `.generate-preview`, a
+  grandchild of the flex container; the real flex children of `.generate-center`
+  are `#creatorCanvasRow` (which holds the preview) and `.generate-bottom-row`.
+  The handler now sizes the canvas row (explicit `height` plus a matching inline
+  `min-height`, which also removes the automatic min-content floor that blocked
+  shrinking) and lets the input row take the rest, clamped by that row's 210px CSS
+  minimum so the two rows cannot overflow the column.
+- **REVISED / LOCAL:** The first splitter fix only resized the canvas row, so drag-
+  ging down grew it past the column (blank space below) and dragging up clipped the
+  preview instead of giving the space back. It now behaves as a splitter: the two
+  panes trade space (`newBottom = total - newTop`), each with an explicit
+  `height`/`minHeight`/`maxHeight` so the CSS `flex: 0 0 clamp(...)` and
+  `min-height: 210px` cannot fight the drag. The floors mirror the stylesheet:
+  220px for the canvas row and 210px for the input row.
+- **VERIFIED / LOCAL UI:** The repository's own harness
+  (`scripts/browser/measure-splitters.cjs`) drives a real browser at two sizes:
+  1920x1080 -> 643+250=893, +120px pull 683+210=893, -240px pull 443+450=893;
+  1280x800 -> 363+250=613, +120px pull 403+210=613, -240px pull 220+393=613 - the top
+  pane lands exactly on its 220px floor. The sum never changes and the column never
+  overflows, which the old code failed on both counts.
+- **VERIFIED / LOCAL:** `node tests/test_generate_resize_splitter.mjs` passes and
+  guards the wiring, the explicit height, the inline minimum, the clamp and the
+  removal of the grandchild flex; the horizontal splitter is covered too.
+- **FIXED / LOCAL:** The canvas size limit was a viewport allowance
+  (\`viewportHeight - 120\`), so a tall canvas grew under the app status bar and its
+  44x44 bottom-right grip stopped receiving pointer events -
+  \`document.elementFromPoint()\` returned \`div.status-bar\` instead of the grip.
+  \`precisionCanvasResizeLimits\` now measures the space between the shell's own top and
+  the top of \`.status-bar\` (new \`precisionCanvasAvailableHeight\`).
+- **VERIFIED / LOCAL UI:** At 1920x1080 the canvas now caps at 733px instead of 760px,
+  the grip's bottom edge lands at 1049 against a status bar top of 1050, and
+  \`elementFromPoint\` at the grip centre returns
+  \`button#precisionCanvasResizeHandle\`. The measuring harness in the plugin
+  repository (\`scripts/browser/measure-splitters.cjs\`) asserts exactly that.
+- **FIXED / LOCAL:** The vertical splitter bar was parked at
+  `bottom: -6px` inside `.generate-preview`, which scrolls
+  (`overflow: auto`). Its centre - and the grip mark drawn at `top: 5px` - were
+  therefore clipped out of the panel, and only a few pixels along its top edge stayed
+  clickable: `elementFromPoint()` at the bar's centre returned
+  `div#previewPanel`. The bar now sits at `bottom: 0`, inside the panel.
+- **VERIFIED / LOCAL UI:** A real pointer sequence (no synthetic events) at 1920x1080
+  and 1280x800 now grabs the bar and trades space: 643+250=893 -> 683+210=893 and
+  363+250=613 -> 403+210=613. The browser harness in the plugin repository asserts
+  this; it previously dispatched synthetic events, which bypassed the hit test and hid
+  the clipping. At 768x900 the bar is not laid out in a hit-testable place and the
+  harness reports a skip instead of a failure.
+- **AUDITED / HEALTHY:** The provider column handle (`.provider-col-resize`) still
+  works: a real pointer drag at x=717 grew its card from 454px to 534px. Its hit area
+  is narrower than it looks, though - scanning across the 8px strip with
+  `elementFromPoint()` shows only x=714..717 resolving to the handle, while x=718..722
+  resolve to the card and the grid. Raising the handle's `z-index` to 5 did not change
+  that (the strip is clipped by the card's `overflow: hidden`), so it is a usability
+  nit - roughly half the intended target - rather than a broken control.
+- **FIXED / LOCAL:** At 768x900 the three children of `.generate-center` kept their
+  intrinsic heights (canvas row 490 + task monitor 167 + input row 349 = 1006) inside a
+  721px column, so the column scrolled and the vertical splitter was no longer laid out
+  where a pointer could reach it. The <=800px breakpoint now lets the canvas and input
+  rows share the column (`flex: 1 1 auto` with their 180px / 210px floors).
+- **VERIFIED / LOCAL UI:** The plugin repository's browser harness asserts the pane
+  sum against the column at 768x900: panes 490+349=839 (overflowing) became 312+222=534
+  against 721, and the check went from a reported upstream issue to `[ok]`.
+- **BOUNDARY:** Not pushed. The changes sit in the local checkout as commits
+  `247f8f8` and the splitter commit; publishing to `master` is the owner's call.
 ## 2026-09-18 v2.6.12 Release And WB-0 Readiness
 
 - **USER-CONFIRMED:** The latest video composer UI repair is ready to
