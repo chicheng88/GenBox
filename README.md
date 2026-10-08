@@ -91,7 +91,8 @@ GenBox 适合多媒体生成爱好者、模型评测玩家、自托管极客，�
 |---|---|---|
 | Windows 10/11 | [GenBox-Windows.zip](https://github.com/liwei9745/GenBox/releases/latest/download/GenBox-Windows.zip) | 解压后双击 `GenBox.exe` |
 | macOS | [GenBox-macOS.zip](https://github.com/liwei9745/GenBox/releases/latest/download/GenBox-macOS.zip) | 解压后运行 `GenBox-macOS` |
-| Linux | [GenBox-Linux-x64.zip](https://github.com/liwei9745/GenBox/releases/latest/download/GenBox-Linux-x64.zip) | 解压、添加执行权限后运行 |
+| Linux x64 | [GenBox-Linux-x64.zip](https://github.com/liwei9745/GenBox/releases/latest/download/GenBox-Linux-x64.zip) | 解压、添加执行权限后运行 |
+| Linux ARM64 | [GenBox-Linux-arm64.zip](https://github.com/liwei9745/GenBox/releases/latest/download/GenBox-Linux-arm64.zip) | 解压、添加执行权限后运行 |
 | NAS / VPS / Docker | [打开最新 Release](https://github.com/liwei9745/GenBox/releases/latest) | 下载名称包含 `Docker-Compose` 的压缩包 |
 
 桌面客户端已经包含运行环境，**不需要另外安装 Python**。

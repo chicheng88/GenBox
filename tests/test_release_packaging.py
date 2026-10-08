@@ -416,14 +416,19 @@ def test_release_workflow_smoke_tests_clients_and_packages_compose():
     assert "needs: release-contract" in workflow
     assert workflow.count("needs: [release-contract, quality]") == 3
     assert "needs: [release-contract, build-windows, build-macos, build-linux]" in workflow
+    assert "ubuntu-24.04-arm" in workflow
+    assert "Linux-arm64" in workflow
+    linux_job = _workflow_job_block(workflow, "build-linux")
+    assert "architecture: x64" in linux_job
+    assert "architecture: arm64" in linux_job
     assert '--validate-release-tag "${{ github.ref_name }}"' in workflow
     assert "scripts/package_release.py --output artifacts" in workflow
     assert '--source-commit "${{ github.sha }}"' in workflow
     assert '"${{ env.APP_NAME }}-Source-"*.zip' in workflow
     assert "artifacts/${{ env.APP_NAME }}-Source-*.zip" in workflow
     assert "SHA256SUMS.txt" in workflow
-    assert workflow.count("cp COPYRIGHT") == 3
-    assert workflow.count("cp THIRD_PARTY_NOTICES.md") == 3
+    assert workflow.count("cp COPYRIGHT") == 4
+    assert workflow.count("cp THIRD_PARTY_NOTICES.md") == 4
     for platform_name, artifact_name in (
         ("windows", "release-windows"),
         ("macos", "release-macos"),
@@ -433,6 +438,7 @@ def test_release_workflow_smoke_tests_clients_and_packages_compose():
         assert f"artifacts/{artifact_name}/" in workflow
     assert workflow.count("dist/THIRD_PARTY_LICENSES") == 3
     assert "--licenses-dir artifacts/linux/THIRD_PARTY_LICENSES" in workflow
+    assert "artifacts/linux-arm64/THIRD_PARTY_LICENSES" in workflow
 
 
 def test_native_runtime_dependencies_are_in_all_distribution_paths():
@@ -685,7 +691,7 @@ def test_all_workflow_external_actions_are_pinned_to_reviewed_full_shas():
         assert any(expected in workflow for workflow in workflows.values())
 
 
-def test_docker_workflow_smokes_and_pushes_one_exact_build():
+def test_docker_workflow_smokes_each_architecture_and_pushes_one_manifest():
     workflow = (ROOT / ".github" / "workflows" / "docker.yml").read_text(encoding="utf-8")
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     smoke_script = (
@@ -694,6 +700,10 @@ def test_docker_workflow_smokes_and_pushes_one_exact_build():
 
     build_action_sha = WORKFLOW_ACTION_PINS["docker/build-push-action"][0]
     assert workflow.count(f"uses: docker/build-push-action@{build_action_sha}") == 1
+    assert "platforms: ${{ matrix.platform }}" in workflow
+    assert "linux/amd64" in workflow
+    assert "linux/arm64" in workflow
+    assert "ubuntu-24.04-arm" in workflow
     assert "load: true" in workflow
     assert "push: false" in workflow
     assert "docker build " not in workflow
@@ -726,11 +736,13 @@ def test_docker_workflow_smokes_and_pushes_one_exact_build():
     assert "management[_-]?key" in smoke_script
     assert "push[_-]?key" in smoke_script
     assert "--retry-connrefused" not in smoke_script
-    assert 'docker save --output "$RUNNER_TEMP/genbox-release-image.tar"' in workflow
-    assert 'docker load --input "$RUNNER_TEMP/genbox-release-image/genbox-release-image.tar"' in workflow
-    assert 'docker image inspect --format \'{{.Id}}\' "$tag"' in workflow
-    assert 'docker tag "$RELEASE_IMAGE_ID" "$tag"' in workflow
-    assert 'docker push "$tag"' in workflow
+    assert 'docker save --output "$RUNNER_TEMP/genbox-release-image-${{ matrix.architecture }}.tar"' in workflow
+    assert 'docker load --input "$artifact_dir/genbox-release-image-$architecture.tar"' in workflow
+    assert 'docker image inspect --format \'{{.Id}}\' "genbox-release:linux-$architecture"' in workflow
+    assert 'docker tag "genbox-release:linux-$architecture" "$platform_tag"' in workflow
+    assert 'docker push "$platform_tag"' in workflow
+    assert 'docker buildx imagetools create --tag "$tag" "$tag-amd64" "$tag-arm64"' in workflow
+    assert 'docker buildx imagetools inspect "$tag"' in workflow
     runtime_step = _workflow_step_block(
         workflow, "build", "Smoke test exact built image runtime imports"
     )
@@ -741,18 +753,17 @@ def test_docker_workflow_smokes_and_pushes_one_exact_build():
         workflow, "build", "Save smoke-tested Docker image without rebuilding"
     )
     push_step = _workflow_step_block(
-        workflow, "push", "Push smoke-tested Docker image without rebuilding"
+        workflow, "push", "Push smoke-tested platform images and create manifests without rebuilding"
     )
     for step in (runtime_step, http_step, save_step):
         assert "RELEASE_IMAGE_ID: ${{ steps.build.outputs.imageid }}" in step
-    assert "RELEASE_IMAGE_ID: ${{ needs.build.outputs.image_id }}" in push_step
-    assert "IMAGE_TAGS: ${{ needs.build.outputs.image_tags }}" in push_step
+    assert "IMAGE_TAGS: ${{ steps.push-meta.outputs.tags }}" in push_step
     build_index = workflow.index("Build Docker image once for smoke and publish")
     runtime_smoke_index = workflow.index("Smoke test exact built image runtime imports")
     http_smoke_index = workflow.index("Smoke test exact built image over HTTP")
     save_index = workflow.index("Save smoke-tested Docker image without rebuilding")
-    load_index = workflow.index("Load and verify exact smoke-tested Docker image")
-    push_index = workflow.index("Push smoke-tested Docker image without rebuilding")
+    load_index = workflow.index("Load and verify exact smoke-tested Docker images")
+    push_index = workflow.index("Push smoke-tested platform images and create manifests without rebuilding")
     assert build_index < runtime_smoke_index < http_smoke_index < save_index < load_index < push_index
     assert "FROM python:3.12-slim" in dockerfile
     assert "COPY requirements.txt requirements-cutout.txt ./" in dockerfile

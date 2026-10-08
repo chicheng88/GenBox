@@ -47,20 +47,19 @@ and user-site imports. The Windows smoke uses a unique GUID-named directory
 under `RUNNER_TEMP` and removes only that owned directory in `finally`.
 
 The Docker publishing workflow applies the same tag/version gate before its
-build job. It builds the publishable image once with Buildx and loads that exact
-image locally. Runtime-import and loopback HTTP smoke checks run against the
-Buildx-reported immutable image ID. The HTTP smoke creates a random-name
+build job. It builds native `linux/amd64` and `linux/arm64` images separately
+with Buildx and loads each exact image locally. Runtime-import and loopback HTTP
+smoke checks run against each Buildx-reported immutable image ID. The HTTP smoke creates a random-name
 container with a per-run ownership label; cleanup requires the recorded
 container ID and label to match, so a failed name collision cannot delete a
 pre-existing resource. Readiness requires the production setup-status JSON
 contract, and bounded failure logs are credential-redacted.
 
-The read-only build job saves that exact smoked image, uploads it as a
-short-retention workflow artifact, and exposes its Buildx image ID and generated
-tag list as job outputs. A separate publish job is the only Docker job with
-`packages: write`; it downloads and loads the saved image, verifies that its
-local image ID still equals the Buildx-reported ID, then applies each registry
-tag, re-verifies every tag ID, and calls `docker push` without rebuilding.
+The read-only build matrix saves each exact smoked image and its Buildx image ID
+as a short-retention workflow artifact. A separate publish job is the only Docker
+job with `packages: write`; it downloads and verifies both images, pushes
+architecture-suffixed images, then creates every normal registry tag as a
+`linux/amd64` + `linux/arm64` manifest without rebuilding.
 
 All external workflow actions in every `.github/workflows/*.yml` file, including
 the pull-request quality gate, are pinned to the full commit IDs resolved from

@@ -8,7 +8,8 @@ The desktop client is self-contained. Python is not required.
 
 - Windows: double-click `GenBox.exe`.
 - macOS: run `chmod +x GenBox-macOS && xattr -c GenBox-macOS && ./GenBox-macOS`.
-- Linux: run `chmod +x GenBox-Linux-x64 && ./GenBox-Linux-x64`.
+- Linux x64: run `chmod +x GenBox-Linux-x64 && ./GenBox-Linux-x64`.
+- Linux ARM64: run `chmod +x GenBox-Linux-arm64 && ./GenBox-Linux-arm64`.
 
 Open `http://localhost:8891` if the browser does not open automatically.
 

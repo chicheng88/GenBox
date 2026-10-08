@@ -34,10 +34,18 @@ jobs:
 
   build:
     needs: release-contract
-    runs-on: ubuntu-latest
-    outputs:
-      image_id: ${{ steps.build.outputs.imageid }}
-      image_tags: ${{ steps.meta.outputs.tags }}
+    name: Build and smoke ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            architecture: amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            architecture: arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout code
@@ -62,6 +70,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
+          platforms: ${{ matrix.platform }}
           load: true
           push: false
           tags: ${{ steps.meta.outputs.tags }}
@@ -92,20 +101,25 @@ jobs:
           set -euo pipefail
           test -n "$RELEASE_IMAGE_ID"
           docker image inspect "$RELEASE_IMAGE_ID" >/dev/null
-          docker save --output "$RUNNER_TEMP/genbox-release-image.tar" "$RELEASE_IMAGE_ID"
-          test -s "$RUNNER_TEMP/genbox-release-image.tar"
+          local_image_tag="genbox-release:linux-${{ matrix.architecture }}"
+          docker tag "$RELEASE_IMAGE_ID" "$local_image_tag"
+          docker save --output "$RUNNER_TEMP/genbox-release-image-${{ matrix.architecture }}.tar" "$local_image_tag"
+          printf '%s\n' "$RELEASE_IMAGE_ID" > "$RUNNER_TEMP/genbox-release-image-${{ matrix.architecture }}.id"
+          test -s "$RUNNER_TEMP/genbox-release-image-${{ matrix.architecture }}.tar"
 
       - name: Upload exact smoke-tested Docker image
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: genbox-release-image-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/genbox-release-image.tar
+          name: genbox-release-image-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/genbox-release-image-${{ matrix.architecture }}.tar
+            ${{ runner.temp }}/genbox-release-image-${{ matrix.architecture }}.id
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
 
   push:
-    name: Push exact smoke-tested image
+    name: Publish exact smoke-tested multi-architecture image
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -113,20 +127,41 @@ jobs:
       packages: write
 
     steps:
-      - name: Download exact smoke-tested Docker image
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Extract metadata
+        id: push-meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=sha,prefix=
+
+      - name: Download exact smoke-tested AMD64 Docker image
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: genbox-release-image-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/genbox-release-image
+          name: genbox-release-image-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/genbox-release-image-amd64
 
-      - name: Load and verify exact smoke-tested Docker image
-        env:
-          RELEASE_IMAGE_ID: ${{ needs.build.outputs.image_id }}
+      - name: Download exact smoke-tested ARM64 Docker image
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: genbox-release-image-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/genbox-release-image-arm64
+
+      - name: Load and verify exact smoke-tested Docker images
         run: |
           set -euo pipefail
-          test -n "$RELEASE_IMAGE_ID"
-          docker load --input "$RUNNER_TEMP/genbox-release-image/genbox-release-image.tar"
-          test "$(docker image inspect --format '{{.Id}}' "$RELEASE_IMAGE_ID")" = "$RELEASE_IMAGE_ID"
+          for architecture in amd64 arm64; do
+            artifact_dir="$RUNNER_TEMP/genbox-release-image-$architecture"
+            expected_id="$(cat "$artifact_dir/genbox-release-image-$architecture.id")"
+            docker load --input "$artifact_dir/genbox-release-image-$architecture.tar"
+            test "$(docker image inspect --format '{{.Id}}' "genbox-release:linux-$architecture")" = "$expected_id"
+          done
 
       - name: Log in to Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -135,20 +170,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push smoke-tested Docker image without rebuilding
+      - name: Push smoke-tested platform images and create manifests without rebuilding
         env:
-          IMAGE_TAGS: ${{ needs.build.outputs.image_tags }}
-          RELEASE_IMAGE_ID: ${{ needs.build.outputs.image_id }}
+          IMAGE_TAGS: ${{ steps.push-meta.outputs.tags }}
         run: |
           set -euo pipefail
-          test -n "$RELEASE_IMAGE_ID"
-          test "$(docker image inspect --format '{{.Id}}' "$RELEASE_IMAGE_ID")" = "$RELEASE_IMAGE_ID"
           pushed=0
           while IFS= read -r tag; do
             test -n "$tag" || continue
-            docker tag "$RELEASE_IMAGE_ID" "$tag"
-            test "$(docker image inspect --format '{{.Id}}' "$tag")" = "$RELEASE_IMAGE_ID"
-            docker push "$tag"
+            for architecture in amd64 arm64; do
+              platform_tag="$tag-$architecture"
+              docker tag "genbox-release:linux-$architecture" "$platform_tag"
+              docker push "$platform_tag"
+            done
+            docker buildx imagetools create --tag "$tag" "$tag-amd64" "$tag-arm64"
+            docker buildx imagetools inspect "$tag"
             pushed=$((pushed + 1))
           done <<< "$IMAGE_TAGS"
           test "$pushed" -gt 0

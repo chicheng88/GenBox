@@ -1,5 +1,24 @@
 # Current Project Status
 
+## 2026-10-08 ARM64 Release Workflow Support
+
+- **IMPLEMENTED / LOCAL:** Docker publishing now builds and smokes separate
+  native `linux/amd64` and `linux/arm64` images. The package-write job reloads
+  the exact smoked artifacts, pushes architecture-suffixed images, and creates
+  each normal GHCR tag as a two-platform manifest without rebuilding.
+- **IMPLEMENTED / LOCAL:** Desktop release packaging now builds on native
+  `ubuntu-24.04-arm` in addition to x64 and publishes standalone and ZIP
+  `GenBox-Linux-arm64` assets with checksums. Download and quick-start docs
+  identify the matching Linux packages.
+- **VERIFIED / LOCAL:** All workflow YAML files parse; release workflow
+  contract assertions (including pinned actions, ARM matrix, artifact handoff,
+  and manifest creation) passed via the local test module; Python compilation
+  and `git diff --check` passed. The default local Python lacks `pytest`, so
+  the complete pytest invocation remains unrun.
+- **BOUNDARY / RESUME:** No hosted Actions run, registry push, tag, or release
+  was triggered. Verify a non-release workflow run on GitHub before claiming
+  ARM64 image or desktop-package availability.
+
 ## 2026-10-02 Precision Canvas Corner Grip Drag Axis
 
 - **REPORTED:** The canvas corner grip (bottom-right of
